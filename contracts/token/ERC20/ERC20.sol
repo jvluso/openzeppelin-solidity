@@ -1,7 +1,9 @@
 pragma solidity ^0.4.24;
 
 import "./IERC20.sol";
+import "./AddressData.sol";
 import "../../math/SafeMath.sol";
+
 
 /**
  * @title Standard ERC20 token
@@ -17,9 +19,12 @@ import "../../math/SafeMath.sol";
 contract ERC20 is IERC20 {
     using SafeMath for uint256;
 
-    mapping (address => uint256) private _balances;
+    //mapping (address => uint256) private _balances;
 
-    mapping (address => mapping (address => uint256)) private _allowed;
+    //mapping (address => mapping (address => uint256)) private _allowed;
+
+    bytes32 internal constant ADDRESS_DATA_HASH = 0x038c13c067801bbca50ff0129748f8dde234dc8e78d6d3e3f05fa9a70788d866;
+
 
     uint256 private _totalSupply;
 
@@ -36,7 +41,17 @@ contract ERC20 is IERC20 {
     * @return An uint256 representing the amount owned by the passed address.
     */
     function balanceOf(address owner) public view returns (uint256) {
-        return _balances[owner];
+        AddressData store = _dataAddress(owner);
+        if(_dataExists(store)) {
+            return store.getBalance();
+        } else {
+            return 0;
+        }
+    }
+
+    function setBalance(address owner, uint256 ammount) internal {
+        AddressData store = _getDataAddress(owner);
+        store.setBalance(ammount);
     }
 
     /**
@@ -46,7 +61,17 @@ contract ERC20 is IERC20 {
      * @return A uint256 specifying the amount of tokens still available for the spender.
      */
     function allowance(address owner, address spender) public view returns (uint256) {
-        return _allowed[owner][spender];
+        AddressData store = _dataAddress(owner);
+        if(_dataExists(store)) {
+            return store.getAllowance(spender);
+        } else {
+            return 0;
+        }
+    }
+
+    function setAllowance(address owner, address spender, uint256 ammount) internal {
+        AddressData store = _getDataAddress(owner);
+        store.setAllowance(spender,ammount);
     }
 
     /**
@@ -71,7 +96,7 @@ contract ERC20 is IERC20 {
     function approve(address spender, uint256 value) public returns (bool) {
         require(spender != address(0));
 
-        _allowed[msg.sender][spender] = value;
+        setAllowance(msg.sender,spender,value);
         emit Approval(msg.sender, spender, value);
         return true;
     }
@@ -85,9 +110,9 @@ contract ERC20 is IERC20 {
      * @param value uint256 the amount of tokens to be transferred
      */
     function transferFrom(address from, address to, uint256 value) public returns (bool) {
-        _allowed[from][msg.sender] = _allowed[from][msg.sender].sub(value);
+        setAllowance(from,msg.sender,allowance(from,msg.sender).sub(value));
         _transfer(from, to, value);
-        emit Approval(from, msg.sender, _allowed[from][msg.sender]);
+        emit Approval(from, msg.sender, allowance(from,msg.sender));
         return true;
     }
 
@@ -104,8 +129,8 @@ contract ERC20 is IERC20 {
     function increaseAllowance(address spender, uint256 addedValue) public returns (bool) {
         require(spender != address(0));
 
-        _allowed[msg.sender][spender] = _allowed[msg.sender][spender].add(addedValue);
-        emit Approval(msg.sender, spender, _allowed[msg.sender][spender]);
+        setAllowance(msg.sender,spender,allowance(msg.sender,spender).add(addedValue));
+        emit Approval(msg.sender, spender, allowance(msg.sender,spender));
         return true;
     }
 
@@ -122,8 +147,8 @@ contract ERC20 is IERC20 {
     function decreaseAllowance(address spender, uint256 subtractedValue) public returns (bool) {
         require(spender != address(0));
 
-        _allowed[msg.sender][spender] = _allowed[msg.sender][spender].sub(subtractedValue);
-        emit Approval(msg.sender, spender, _allowed[msg.sender][spender]);
+        setAllowance(msg.sender,spender,allowance(msg.sender,spender).sub(subtractedValue));
+        emit Approval(msg.sender, spender, allowance(msg.sender,spender));
         return true;
     }
 
@@ -136,8 +161,8 @@ contract ERC20 is IERC20 {
     function _transfer(address from, address to, uint256 value) internal {
         require(to != address(0));
 
-        _balances[from] = _balances[from].sub(value);
-        _balances[to] = _balances[to].add(value);
+        setBalance(from,balanceOf(from).sub(value));
+        setBalance(to,balanceOf(to).add(value));
         emit Transfer(from, to, value);
     }
 
@@ -152,7 +177,7 @@ contract ERC20 is IERC20 {
         require(account != address(0));
 
         _totalSupply = _totalSupply.add(value);
-        _balances[account] = _balances[account].add(value);
+        setBalance(account,balanceOf(account).add(value));
         emit Transfer(address(0), account, value);
     }
 
@@ -166,7 +191,7 @@ contract ERC20 is IERC20 {
         require(account != address(0));
 
         _totalSupply = _totalSupply.sub(value);
-        _balances[account] = _balances[account].sub(value);
+        setBalance(account,balanceOf(account).sub(value));
         emit Transfer(account, address(0), value);
     }
 
@@ -179,8 +204,31 @@ contract ERC20 is IERC20 {
      * @param value The amount that will be burnt.
      */
     function _burnFrom(address account, uint256 value) internal {
-        _allowed[account][msg.sender] = _allowed[account][msg.sender].sub(value);
+        setAllowance(account,msg.sender,allowance(account,msg.sender).sub(value));
         _burn(account, value);
-        emit Approval(account, msg.sender, _allowed[account][msg.sender]);
+        emit Approval(account, msg.sender, allowance(account,msg.sender));
+    }
+
+
+    function _dataAddress(address _owner) internal view returns(AddressData) {
+        keccak256(abi.encodePacked(this,_owner,ADDRESS_DATA_HASH));
+    }
+        
+    function _dataExists(AddressData _store) internal view returns(bool) {
+        uint256 codeLength;
+        assembly {codeLength := extcodesize(_store)}
+        return codeLength > 0;
+    }
+
+    function _getDataAddress(address _owner) internal returns(AddressData) {
+        bytes memory addressDataCode = "\x608060405234801561001057600080fd5b5033600260006101000a81548173f\xfffffffffffffffffffffffffffffffffffffff021916908373ffffffffffff\xffffffffffffffffffffffffffff1602179055506103a480610061600039600\x0f300608060405260043610610062576000357c010000000000000000000000\x0000000000000000000000000000000000900463ffffffff16806312065fe01\x4610067578063310ec4a714610092578063eb5a662e146100df578063fb1669\xca14610136575b600080fd5b34801561007357600080fd5b5061007c6101635\x65b6040518082815260200191505060405180910390f35b34801561009e5760\x0080fd5b506100dd600480360381019080803573fffffffffffffffffffffff\xfffffffffffffffff1690602001909291908035906020019092919050505061\x01c9565b005b3480156100eb57600080fd5b506101206004803603810190808\x03573ffffffffffffffffffffffffffffffffffffffff169060200190929190\x50505061026d565b6040518082815260200191505060405180910390f35b348\x01561014257600080fd5b506101616004803603810190808035906020019092\x9190505050610312565b005b6000600260009054906101000a900473fffffff\xfffffffffffffffffffffffffffffffff1673ffffffffffffffffffffffffff\xffffffffffffff163373ffffffffffffffffffffffffffffffffffffffff161\x415156101c157600080fd5b600054905090565b600260009054906101000a90\x0473ffffffffffffffffffffffffffffffffffffffff1673fffffffffffffff\xfffffffffffffffffffffffff163373ffffffffffffffffffffffffffffffff\xffffffff1614151561022557600080fd5b80600160008473fffffffffffffff\xfffffffffffffffffffffffff1673ffffffffffffffffffffffffffffffffff\xffffff168152602001908152602001600020819055505050565b60006002600\x09054906101000a900473ffffffffffffffffffffffffffffffffffffffff16\x73ffffffffffffffffffffffffffffffffffffffff163373fffffffffffffff\xfffffffffffffffffffffffff161415156102cb57600080fd5b600160008373\xffffffffffffffffffffffffffffffffffffffff1673fffffffffffffffffff\xfffffffffffffffffffff168152602001908152602001600020549050919050\x565b600260009054906101000a900473fffffffffffffffffffffffffffffff\xfffffffff1673ffffffffffffffffffffffffffffffffffffffff163373ffff\xffffffffffffffffffffffffffffffffffff1614151561036e57600080fd5b8\x0600081905550505600a165627a7a72305820b4874e418d73bf67452e59bd63\x709860098f039972254e42b371e65afc0522ef0029000000000000000000000";
+        uint length = addressDataCode.length;
+        bool success;
+        AddressData store = _dataAddress(_owner);
+        if(!_dataExists(store)){
+            assembly{success := create2(0,_owner,addressDataCode,length)}
+        }
+        return store;
     }
 }
+
